@@ -28,7 +28,7 @@ public:
         // of the record.  At a later time, it is then possible to reconstitute the record
         // by calling MyDB_Record.fromBinary (obtainedPointer)... ASSUMING that the page that
         // the record is located on has not been swapped out
-        void *getCurrentPointer ();
+        void *getCurrentPointer () override;
 
         // advance to the next record... returns true if there is a next record, and
         // false if there are no more records to iterate over.  Not that this cannot
