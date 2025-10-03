@@ -101,7 +101,7 @@ void sort (int runSize, MyDB_TableReaderWriter &sortMe, MyDB_TableReaderWriter &
 		runPages = nextDepthRuns;
 	}
 
-	// runPages now contains a single element, vector<MyDB_PageReaderWriter> thar represents
+	// runPages now contains a single element, vector<MyDB_PageReaderWriter> that represents
 	// the completed, sorted run of runSize pages.
 	vector<MyDB_PageReaderWriter> &lastRun = runPages[0]; //reference instead of object-by-object copy
 
