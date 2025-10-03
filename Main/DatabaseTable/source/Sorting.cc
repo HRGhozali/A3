@@ -11,49 +11,62 @@
 
 using namespace std;
 
+// Structure to handle comparisons in the priority queue and other places
 struct pQueueComparison {
-	MyDB_RecordPtr lhs;
-	MyDB_RecordPtr rhs;
-	function<bool(const MyDB_RecordPtr&, const MyDB_RecordPtr&)> compareRecords;
+	MyDB_RecordPtr lhs;  // left hand side pointer
+	MyDB_RecordPtr rhs;  // right hand side pointer
+	function<bool(const MyDB_RecordPtr&, const MyDB_RecordPtr&)> compareRecords;  // Function to compare left and right hand sides
 
+	// Constructor
 	pQueueComparison(MyDB_RecordPtr lhsIn,
-                 MyDB_RecordPtr rhsIn,
-                 std::function<bool(const MyDB_RecordPtr&, const MyDB_RecordPtr&)> compIn)
-    : lhs(lhsIn), rhs(rhsIn), compareRecords(std::move(compIn)) {}
+                 	 MyDB_RecordPtr rhsIn,
+                 	 function<bool(const MyDB_RecordPtr&, const MyDB_RecordPtr&)> compIn)
+    : lhs(lhsIn), rhs(rhsIn), compareRecords(move(compIn)) {}
 
-	bool operator() (const MyDB_RecordIteratorAltPtr &a, const MyDB_RecordIteratorAltPtr &b) const {
-		a->getCurrent(lhs);
-		b->getCurrent(rhs);
+	bool operator() (const MyDB_RecordIteratorAltPtr &a, const MyDB_RecordIteratorAltPtr &b) const {  // Comparison operator
+		a->getCurrent(lhs);  // Loads a's current record into lhs
+		b->getCurrent(rhs);  // Loads b's current record into rhs
 
-		return !compareRecords(lhs,rhs);
+		return !compareRecords(lhs,rhs);  // Compares the 2 using the comparison function
 	}
 };
 
-void mergeIntoFile (MyDB_TableReaderWriter &sortIntoMe, vector <MyDB_RecordIteratorAltPtr> &mergeUs, function <bool ()>comparator, MyDB_RecordPtr lhs, MyDB_RecordPtr rhs) {
-	auto compRecs = [](const MyDB_RecordPtr &lhs, const MyDB_RecordPtr &rhs) {
+// Function that generates a comparison between the data in lhs and rhs
+auto compRecs = [](const MyDB_RecordPtr &lhs, const MyDB_RecordPtr &rhs) {
 		auto function = buildRecordComparator(lhs, rhs, "");
 		return function(); // Double check later if a proper string is necessary
-	};
+};
 
+void mergeIntoFile (MyDB_TableReaderWriter &sortIntoMe, vector <MyDB_RecordIteratorAltPtr> &mergeUs, function <bool ()>comparator, MyDB_RecordPtr lhs, MyDB_RecordPtr rhs) {
+	// Creates comparator for the priority queue	
 	pQueueComparison compare(lhs, rhs, compRecs);
 
+	// Creates priority queue for RecordIteratorAltPtrs, using a vector of RecordIteratorAltPtrs, and using an 
+	// inputted pQueueComparison as the comparator function
 	priority_queue<MyDB_RecordIteratorAltPtr, vector<MyDB_RecordIteratorAltPtr>, pQueueComparison> pQueue(compare);
 	
 	// Queues all the record iterators
 	for (int i = 0; i < mergeUs.size(); i++) {
 		pQueue.push(mergeUs.at(i));
 	}
-	
+
 	// May need to call advance to start?
 
 	// Runs until mergeUs is empty
 	while (pQueue.size() > 0) {
+		// Gets and pops the smallest element
 		MyDB_RecordIteratorAltPtr temp = pQueue.top();
 		pQueue.pop();
+
+		// Makes a temporary record pointer & writes the current reccord from the smallest element into it
 		MyDB_RecordPtr tempPtr;
 		temp->getCurrent(tempPtr);
 		// TODO: write tempPtr to file
+
+		// Appends tempPtr to table
 		sortIntoMe.append(tempPtr);
+
+		// Advances temp; if advance() returns true (there is another), pushes temp back to the priority queue
 		if (temp->advance()) {
 			pQueue.push(temp);
 		}
