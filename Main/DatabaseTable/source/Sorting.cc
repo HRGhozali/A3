@@ -43,6 +43,8 @@ void mergeIntoFile (MyDB_TableReaderWriter &sortIntoMe, vector <MyDB_RecordItera
 	for (int i = 0; i < mergeUs.size(); i++) {
 		pQueue.push(mergeUs.at(i));
 	}
+	
+	// May need to call advance to start?
 
 	// Runs until mergeUs is empty
 	while (pQueue.size() > 0) {
