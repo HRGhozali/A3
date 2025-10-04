@@ -5,6 +5,7 @@
 #include "MyDB_PageReaderWriter.h"
 #include "MyDB_TableRecIterator.h"
 #include "MyDB_TableRecIteratorAlt.h"
+#include "MyDB_PageListIteratorAlt.h"
 #include "MyDB_TableReaderWriter.h"
 #include "Sorting.h"
 #include <sstream>
@@ -180,7 +181,9 @@ void sort (int runSize, MyDB_TableReaderWriter &sortMe, MyDB_TableReaderWriter &
 				if (j + 1 >= inMemoryRunPages.size()) {
 					nextDepthRuns.push_back(inMemoryRunPages[j]);
 				} else {
-					vector<MyDB_PageReaderWriter> mergedRun = mergeIntoList(sortMe.getBufferMgr(), inMemoryRunPages[j][0].getIteratorAlt(), inMemoryRunPages[j+1][0].getIteratorAlt(), comparator, lhs, rhs);
+					MyDB_RecordIteratorAltPtr leftIter = make_shared<MyDB_PageListIteratorAlt>(inMemoryRunPages[j]);
+					MyDB_RecordIteratorAltPtr rightIter = make_shared<MyDB_PageListIteratorAlt>(inMemoryRunPages[j+1]);
+					vector<MyDB_PageReaderWriter> mergedRun = mergeIntoList(sortMe.getBufferMgr(), leftIter, rightIter, comparator, lhs, rhs);
 					nextDepthRuns.push_back(mergedRun);
 				}
 			}
