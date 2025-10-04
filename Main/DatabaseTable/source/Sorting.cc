@@ -33,12 +33,6 @@ struct pQueueComparison {
 	}
 };
 
-// Function that generates a comparison between the data in lhs and rhs
-// auto compRecs = [](const MyDB_RecordPtr &lhs, const MyDB_RecordPtr &rhs) {
-// 		auto function = buildRecordComparator(lhs, rhs, "");
-// 		return function(); // Double check later if a proper string is necessary
-// };
-
 void mergeIntoFile (MyDB_TableReaderWriter &sortIntoMe, vector <MyDB_RecordIteratorAltPtr> &mergeUs, function <bool ()>comparator, MyDB_RecordPtr lhs, MyDB_RecordPtr rhs) {
 	// Creates comparator for the priority queue	
 	pQueueComparison compare(lhs, rhs, comparator);
