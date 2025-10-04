@@ -15,121 +15,224 @@ using namespace std;
 struct pQueueComparison {
 	MyDB_RecordPtr lhs;  // left hand side pointer
 	MyDB_RecordPtr rhs;  // right hand side pointer
-	function<bool(const MyDB_RecordPtr&, const MyDB_RecordPtr&)> compareRecords;  // Function to compare left and right hand sides
+	function<bool()> compareRecords;  // Function to compare left and right hand sides
 
 	// Constructor
 	pQueueComparison(MyDB_RecordPtr lhsIn,
                  	 MyDB_RecordPtr rhsIn,
-                 	 function<bool(const MyDB_RecordPtr&, const MyDB_RecordPtr&)> compIn)
-    : lhs(lhsIn), rhs(rhsIn), compareRecords(move(compIn)) {}
+                 	 function<bool()> compIn)
+    : lhs(lhsIn), rhs(rhsIn), compareRecords(compIn) {}
 
-	bool operator() (const MyDB_RecordIteratorAltPtr &a, const MyDB_RecordIteratorAltPtr &b) const {  // Comparison operator
+	bool operator() (const MyDB_RecordIteratorAltPtr &a, const MyDB_RecordIteratorAltPtr &b) {  // Comparison operator. Must not be const().
 		a->getCurrent(lhs);  // Loads a's current record into lhs
 		b->getCurrent(rhs);  // Loads b's current record into rhs
 
-		return !compareRecords(lhs,rhs);  // Compares the 2 using the comparison function
+		// Returns !(a < b) to make the priority queue max-heap behave like a min-heap.
+		return !compareRecords();  // Compares the lhs and rhs using the comparison function
 	}
 };
 
 // Function that generates a comparison between the data in lhs and rhs
-auto compRecs = [](const MyDB_RecordPtr &lhs, const MyDB_RecordPtr &rhs) {
-		auto function = buildRecordComparator(lhs, rhs, "");
-		return function(); // Double check later if a proper string is necessary
-};
+// auto compRecs = [](const MyDB_RecordPtr &lhs, const MyDB_RecordPtr &rhs) {
+// 		auto function = buildRecordComparator(lhs, rhs, "");
+// 		return function(); // Double check later if a proper string is necessary
+// };
 
 void mergeIntoFile (MyDB_TableReaderWriter &sortIntoMe, vector <MyDB_RecordIteratorAltPtr> &mergeUs, function <bool ()>comparator, MyDB_RecordPtr lhs, MyDB_RecordPtr rhs) {
 	// Creates comparator for the priority queue	
-	pQueueComparison compare(lhs, rhs, compRecs);
+	pQueueComparison compare(lhs, rhs, comparator);
 
 	// Creates priority queue for RecordIteratorAltPtrs, using a vector of RecordIteratorAltPtrs, and using an 
 	// inputted pQueueComparison as the comparator function
 	priority_queue<MyDB_RecordIteratorAltPtr, vector<MyDB_RecordIteratorAltPtr>, pQueueComparison> pQueue(compare);
 	
 	// Queues all the record iterators
-	for (int i = 0; i < mergeUs.size(); i++) {
-		pQueue.push(mergeUs.at(i));
+	for (auto &iter: mergeUs) {
+		// Advance each iterator to its first record.
+		if (iter->advance()) {
+			pQueue.push(iter);
+		}
+		
 	}
-
-	// May need to call advance to start?
 
 	// Runs until mergeUs is empty
 	while (pQueue.size() > 0) {
-		// Gets and pops the smallest element
-		MyDB_RecordIteratorAltPtr temp = pQueue.top();
+		// Gets the iterator that is pointing to the smallest record.
+		MyDB_RecordIteratorAltPtr smallestIter = pQueue.top();
 		pQueue.pop();
 
-		// Makes a temporary record pointer & writes the current reccord from the smallest element into it
-		MyDB_RecordPtr tempPtr;
-		temp->getCurrent(tempPtr);
-		// TODO: write tempPtr to file
+		// Use lhs as the temporary scratchpad to get the current record
+		smallestIter->getCurrent(lhs);
 
-		// Appends tempPtr to table
-		sortIntoMe.append(tempPtr);
+		// Appends the record that just loaded into lhs to the table
+		sortIntoMe.append(lhs);
 
-		// Advances temp; if advance() returns true (there is another), pushes temp back to the priority queue
-		if (temp->advance()) {
-			pQueue.push(temp);
+		// Advance the iterator. If it still has records, push it back into the priority queue. 
+		if (smallestIter->advance()) {
+			pQueue.push(smallestIter);
 		}
 	}
 }
 
-vector <MyDB_PageReaderWriter> mergeIntoList (MyDB_BufferManagerPtr, MyDB_RecordIteratorAltPtr, MyDB_RecordIteratorAltPtr, function <bool ()>, 
-	MyDB_RecordPtr, MyDB_RecordPtr) {return vector <MyDB_PageReaderWriter> (); } 
+// helper function.  Gets two iterators, leftIter and rightIter.  It is assumed that these are iterators over
+// sorted lists of records.  This function then merges all of those records into a list of anonymous pages,
+// and returns the list of anonymous pages to the caller.  The resulting list of anonymous pages is sorted.
+// Comparisons are performed using comparator, lhs, rhs
+vector <MyDB_PageReaderWriter> mergeIntoList (MyDB_BufferManagerPtr parent, MyDB_RecordIteratorAltPtr leftIter,
+        MyDB_RecordIteratorAltPtr rightIter, function <bool ()> comparator, MyDB_RecordPtr lhs, MyDB_RecordPtr rhs) {
+
+			vector<MyDB_PageReaderWriter> returnVector;
+
+			// Get the first anonymous page to start writing to
+			MyDB_PageReaderWriter currPage(*parent);
+			currPage.clear();
+			returnVector.push_back(currPage);
+
+			// Move to first record (priming iterator)
+			bool leftHasNext = leftIter->advance();
+			bool rightHasNext = rightIter->advance();
+
+			// Merge loop: continue as long as either iterators has records
+			while (leftHasNext || rightHasNext) {
+				
+				// We append the left record if:
+				//	1. The left iterator has a record, and
+				//	2. Either the right iterator is empty or the left record is smaller
+				if (leftHasNext && (!rightHasNext || (leftIter->getCurrent(lhs), rightIter->getCurrent(rhs), comparator()))) { // If comparator() is true, lhs < rhs
+					
+					leftIter->getCurrent(lhs);
+
+					// Append lhs and advance left iterator.
+					if (!currPage.append(lhs)) {
+						// Could not append to currPage. Page is full. Get a new one. Append to returnVector.
+						currPage = MyDB_PageReaderWriter(*parent);
+						currPage.clear();
+						currPage.append(lhs);
+						returnVector.push_back(currPage);
+					}
+					leftHasNext = leftIter->advance(); // move to next leftIter record
+				} else { //Otherwise append the right record
+
+					rightIter->getCurrent(rhs);
+
+					// Append rhs and advance the right iterator. 
+					if (!currPage.append(rhs)) {
+						// Could not append to currPage. Page is full. Get a new one. Append to returnVector.
+						currPage = MyDB_PageReaderWriter(*parent);
+						currPage.clear();
+						currPage.append(rhs);
+						returnVector.push_back(currPage);
+					}
+					rightHasNext = rightIter->advance(); // move to next rightIter record
+				}
+
+			}
+
+			return returnVector;
+		}
 	
 
 // performs a TPMMS of the table sortMe.  The results are written to sortIntoMe.  The run 
 // size for the first phase of the TPMMS is given by runSize.  Comparisons are performed 
 // using comparator, lhs, rhs
 void sort (int runSize, MyDB_TableReaderWriter &sortMe, MyDB_TableReaderWriter &sortIntoMe, function <bool ()> comparator, MyDB_RecordPtr lhs, MyDB_RecordPtr rhs) {
-	// Vector to hold list of sorted pages. Initially, each list is just one page.
-	vector<vector<MyDB_PageReaderWriter>> runPages;
 	
-	// 1. Load a run of pages into RAM
-	for (int i = 0; i < runSize; i++) {
-		// Get page
-		MyDB_PageReaderWriter currPage(sortMe[i]);
+	/* PHASE 1: GENERATE ALL SORTED RUNS */
 
-		// Sort the records in the page
-		currPage.sort(comparator, lhs, rhs);
+	int numPages = sortMe.getNumPages();
+	vector<MyDB_TableReaderWriterPtr> tempRuns; // Stores temporary run tables
 
-		// Add this single, sorted page as a new run.
-		runPages.push_back({currPage});
-	}
+	for (int i = 0; i < numPages; i+= runSize) {
+		
+		// 1.1 Create a new temporary table for this run. 
+		string runName = "temp_run_" + to_string(i / runSize);
+		MyDB_TablePtr runTablePtr = make_shared<MyDB_Table>(runName, runName + ".bin", sortMe.getTable()->getSchema());
+		MyDB_TableReaderWriterPtr runTableSortIntoMe = make_shared<MyDB_TableReaderWriter>(runTablePtr, sortMe.getBufferMgr());
+		tempRuns.push_back(runTableSortIntoMe);
 
-	// 2. Merging runs in memory
-	while (runPages.size() > 1) {
-		vector<vector<MyDB_PageReaderWriter>> nextDepthRuns;
-		// Iterate through the current runs, merging adjacent pairs
-		for (size_t i = 0; i < runSize; i += 2) {
-			// If there's an odd run out at the end, move it to the next level. Checks if runPages[i+1] exists
-			if (i + 1 >= runPages.size()) {
-				nextDepthRuns.push_back(runPages[i]);
-			} else {
-				vector<MyDB_PageReaderWriter> mergedRun = mergeIntoList(sortMe.getBufferMgr(), runPages[i][0].getIteratorAlt(), runPages[i+1][0].getIteratorAlt(), comparator, lhs, rhs);
-				nextDepthRuns.push_back(mergedRun);
+		// 1.2 Perform in-memory sort for the current run of pages
+
+		// Vector to hold list of sorted pages. Initially, each list is just one page.
+		vector<vector<MyDB_PageReaderWriter>> inMemoryRunPages;
+
+		// Determine the total number of pages for this run. Handles the last, smaller run of pages.
+		int pagesInThisRun = min(runSize, numPages - i);
+
+		// 1.2.1.  Load a run of pages into RAM
+		for (int j = 0; j < pagesInThisRun; j++) {
+			// Get page
+			MyDB_PageReaderWriter currPage(sortMe[i + j]);
+
+			// Sort the records in the page in RAM
+			currPage.sortInPlace(comparator, lhs, rhs);
+
+			// Add this single, sorted page as a new run.
+			inMemoryRunPages.push_back({currPage});
+
+		}
+
+		// 1.2.3. Merging runs in memory
+		while (inMemoryRunPages.size() > 1) {
+			vector<vector<MyDB_PageReaderWriter>> nextDepthRuns;
+			// Iterate through the current runs, merging adjacent pairs
+			for (size_t j = 0; j < inMemoryRunPages.size(); j += 2) {
+				// If there's an odd run out at the end, move it to the next level. Checks if runPages[i+1] exists
+				if (j + 1 >= inMemoryRunPages.size()) {
+					nextDepthRuns.push_back(inMemoryRunPages[j]);
+				} else {
+					vector<MyDB_PageReaderWriter> mergedRun = mergeIntoList(sortMe.getBufferMgr(), inMemoryRunPages[j][0].getIteratorAlt(), inMemoryRunPages[j+1][0].getIteratorAlt(), comparator, lhs, rhs);
+					nextDepthRuns.push_back(mergedRun);
+				}
+			}
+
+			// The next depth level becomes the current depth level for the next iteration.
+			inMemoryRunPages = nextDepthRuns;
+		}
+
+
+		// 1.3. Write the sorted in-memory tun to its temporary table. 
+
+		if (!inMemoryRunPages.empty()) {
+
+			// inMemoryRunPages now contains a single element, vector<MyDB_PageReaderWriter> that represents
+			// the completed, sorted run of pagesInThisRun pages.
+			vector<MyDB_PageReaderWriter> &lastRun = inMemoryRunPages[0]; //reference instead of object-by-object copy
+
+			// 3.  Write the sorted run to SortIntoMe
+			for (MyDB_PageReaderWriter page: lastRun) {
+				
+				// Get an iterator for the current page.
+				MyDB_RecordIteratorPtr pageIter = page.getIterator(lhs); // could also be rhs: lhs/rhs are MyDB_RecordPtr scratchpads
+				
+				// Append all records from this page to the output table
+				while (pageIter->hasNext()) {
+					pageIter->getNext();
+					runTableSortIntoMe->append(lhs);
+				}
 			}
 		}
 
-		// The next depth level becomes the current depth level for the next iteration.
-		runPages = nextDepthRuns;
+	}
+	
+	/* Phase 2: Merge all runs into the final output */
+	
+	// Get iterators for all the temporary run tables created
+	vector<MyDB_RecordIteratorAltPtr> runIterators;
+	for (auto &run: tempRuns) {
+		runIterators.push_back(run->getIteratorAlt());
 	}
 
-	// runPages now contains a single element, vector<MyDB_PageReaderWriter> that represents
-	// the completed, sorted run of runSize pages.
-	vector<MyDB_PageReaderWriter> &lastRun = runPages[0]; //reference instead of object-by-object copy
+	// Call mergeIntoFile to perform the final merge all temp files into sortIntoMe
+	mergeIntoFile(sortIntoMe, runIterators, comparator, lhs, rhs);
 
-	// 3.  Write the sorted run to SortIntoMe
-	for (MyDB_PageReaderWriter page: lastRun) {
-		
-		// Get an iterator for the current page.
-		MyDB_RecordIteratorPtr pageIter = page.getIterator(lhs); // could also be rhs: lhs/rhs are MyDB_RecordPtr scratchpads
-		
-		// Append all records from this page to the output table
-		while (pageIter->hasNext()) {
-			pageIter->getNext();
-			sortIntoMe.append(lhs);
-		}
+	// Clean up temp files
+	for (auto &run: tempRuns) {
+		remove(run->getTable()->getStorageLoc().c_str());
 	}
+	
+	
+
+	
 }
 
 #endif
